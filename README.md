@@ -14,6 +14,11 @@ Roadmap
   - Why RWKV6 instead of RWKV4?
     - RWKV6 performs much better on longer context than RWKV4  
 
+- High level targets:
+  - To promote a methodology in understanding the properties of a given RNN language model.
+    - Need to abstract the engineering process, and find the important steps/ingridients
+    - current eng includes finetuning, prompt tuning, prefix tuning, with collected or synthesized data.
+
 - Targets:
   - understand the property of P(y|v)
     - estimate the entropy of the distribution? 
