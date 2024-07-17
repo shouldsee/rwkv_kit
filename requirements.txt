@@ -1,0 +1,7 @@
+torch
+ninja
+tokenizers
+rwkv==0.8.26
+pynvml
+huggingface_hub
+gradio==3.37.0
