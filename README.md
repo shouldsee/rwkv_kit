@@ -1,4 +1,19 @@
-Roadmap
+## Usage
+
+```
+### make sure you have gpu
+python3 -m pip install -r requirements.txt
+python3 app.py
+
+
+## take 60sec to boot
+### start a new terminal. 
+curl localhost:6006 | head -c20
+## should see following msg 
+## {"named_endpoints":{ 
+```
+
+## Roadmap
 
 - Notations
   - v:hidden state
