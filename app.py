@@ -15,12 +15,19 @@ gen_limit_long = 800
 title = "RWKV-x060-World-1B6-v2.1-20240328-ctx4096"
 
 os.environ["RWKV_JIT_ON"] = '1'
-os.environ["RWKV_CUDA_ON"] = '1' # if '1' then use CUDA kernel for seq mode (much faster)
 
-from rwkv.model import RWKV
+# from rwkv.model import RWKV
+from rwkv_model import RWKV
 
 model_path = hf_hub_download(repo_id="BlinkDL/rwkv-6-world", filename=f"{title}.pth")
-model = RWKV(model=model_path, strategy='cuda fp16i8 *8 -> cuda fp16')
+
+
+# os.environ["RWKV_CUDA_ON"] = '1' # if '1' then use CUDA kernel for seq mode (much faster)
+# model = RWKV(model=model_path, strategy='cuda fp16i8 *8 -> cuda fp16')
+
+os.environ["RWKV_CUDA_ON"] = '0' # if '1' then use CUDA kernel for seq mode (much faster)
+model = RWKV(model=model_path, strategy='cpu fp32')
+
 # model_path = '/mnt/e/RWKV-Runner/models/rwkv-final-v6-2.1-7b' # conda activate torch2; cd /mnt/program/_RWKV_/_ref_/_gradio_/RWKV-Gradio-2; python app_tab.py
 # model = RWKV(model=model_path, strategy='cuda fp16i8 *8 -> cuda fp16')
 
@@ -129,6 +136,71 @@ def infer_ctx(
     gc.collect()
     torch.cuda.empty_cache()
     yield out_str.strip()
+
+
+import plotly.graph_objects as go
+
+def plot_target_logits(
+    ctx,
+    token_count=gen_limit,
+    temperature=1.0,
+    top_p=0.3,
+    presencePenalty = 0.3,
+    countPenalty = 0.3,
+    state=None,
+):  
+    '''
+    输出不同位置的logits
+    '''
+
+    state = copy.deepcopy(state)
+    args = PIPELINE_ARGS(temperature = max(0.2, float(temperature)), top_p = float(top_p),
+                     alpha_frequency = countPenalty,
+                     alpha_presence = presencePenalty,
+                     token_ban = [], # ban the generation of some tokens
+                     token_stop = [0]) # stop generation whenever you see any token here
+    ctx = ctx.strip()
+    all_tokens = []
+    out_last = 0
+    out_str = ''
+    occurrence = {}
+    if 1:
+        enc_ctx = pipeline.encode(ctx)[-ctx_limit:]
+        out, state, outputs = model.forward_with_internal( enc_ctx, state)
+        logits = model.to_logits(outputs)
+
+        targ_tok = enc_ctx[-1]
+        xtext = dec_ctx = [ pipeline.decode([xx]) for xx in enc_ctx]
+        print(ctx)
+        print(dec_ctx)
+        fig = go.Figure(data=go.Heatmap(
+                            z = logits[:,:,targ_tok].cpu().numpy(),
+                            # z = logits[:,:,targ_tok].cpu().numpy().T,
+                            # x = dec_ctx,
+                            # x = [ pipeline.decode([xx]) for xx in enc_ctx],
+
+
+                            zmax = 0,
+                            zmin = -30,
+                            colorbar=dict(title='logits'),
+                            colorscale='greens',
+                            ),
+                            layout=go.Layout(
+                                title=f"Target Token Logit Plot: 目标token {[pipeline.decode([targ_tok])]}",
+                                xaxis=dict(
+                                    title="Input Token",
+                                    tickmode='array',
+                                    ticktext=xtext,
+                                    tickvals=list(range(len(xtext))),
+                                
+                                ),
+                                yaxis=dict(title="Hidden Layer Index"),
+                            )
+                        )
+
+
+        return ['dbg', fig]
+
 
 
 def evaluate(
@@ -241,6 +313,32 @@ examples_wyw = [
 with gr.Blocks(title=title) as demo:
     gr.HTML(f"<div style=\"text-align: center;\">\n<h1>{title}</h1>\n</div>")
 
+    submit_func = plot_target_logits
+    with gr.Tab("Dev panel"):
+        gr.Markdown(f"This is [RWKV-6](https://huggingface.co/BlinkDL/rwkv-6-world) base model. Supports 100+ world languages and code. RWKV is a 100% attention-free RNN [RWKV-LM](https://github.com/BlinkDL/RWKV-LM), and we have [300+ Github RWKV projects](https://github.com/search?o=desc&p=1&q=rwkv&s=updated&type=Repositories). Demo limited to ctxlen {ctx_limit}.")
+        with gr.Row():
+            with gr.Column():
+                prompt = gr.Textbox(lines=2, label="Raw Input", value="Assistant: How can we craft an engaging story featuring vampires on Mars? Let's think step by step and provide an expert response.")
+                token_count = gr.Slider(10, gen_limit, label="Max Tokens", step=10, value=gen_limit)
+                temperature = gr.Slider(0.2, 2.0, label="Temperature", step=0.1, value=1.0)
+                top_p = gr.Slider(0.0, 1.0, label="Top P", step=0.05, value=0.3)
+                presence_penalty = gr.Slider(0.0, 1.0, label="Presence Penalty", step=0.1, value=0.5)
+                count_penalty = gr.Slider(0.0, 1.0, label="Count Penalty", step=0.1, value=0.5)
+            with gr.Column():
+                with gr.Row():
+                    submit = gr.Button("Submit", variant="primary")
+                    clear = gr.Button("Clear", variant="secondary")
+                output = gr.Textbox(label="Output", lines=3)
+                output2 = gr.Textbox(label="Output2", lines=3)
+                image1 = gr.Plot(label='image1')
+        data = gr.Dataset(components=[prompt, token_count, temperature, top_p, presence_penalty, count_penalty], samples=examples, samples_per_page=50, label="Examples", headers=["Prompt", "Max Tokens", "Temperature", "Top P", "Presence Penalty", "Count Penalty"])
+        submit.click(submit_func, 
+        [prompt, token_count, temperature, top_p, presence_penalty, count_penalty], 
+        [output, image1])
+        clear.click(lambda: None, [], [output])
+        data.click(lambda x: x, [data], [prompt, token_count, temperature, top_p, presence_penalty, count_penalty])
+
+    submit_func = evaluate
     with gr.Tab("=== Base Model (Raw Generation) ==="):
         gr.Markdown(f"This is [RWKV-6](https://huggingface.co/BlinkDL/rwkv-6-world) base model. Supports 100+ world languages and code. RWKV is a 100% attention-free RNN [RWKV-LM](https://github.com/BlinkDL/RWKV-LM), and we have [300+ Github RWKV projects](https://github.com/search?o=desc&p=1&q=rwkv&s=updated&type=Repositories). Demo limited to ctxlen {ctx_limit}.")
         with gr.Row():
@@ -257,9 +355,12 @@ with gr.Blocks(title=title) as demo:
                     clear = gr.Button("Clear", variant="secondary")
                 output = gr.Textbox(label="Output", lines=30)
         data = gr.Dataset(components=[prompt, token_count, temperature, top_p, presence_penalty, count_penalty], samples=examples, samples_per_page=50, label="Examples", headers=["Prompt", "Max Tokens", "Temperature", "Top P", "Presence Penalty", "Count Penalty"])
-        submit.click(evaluate, [prompt, token_count, temperature, top_p, presence_penalty, count_penalty], [output])
+        submit.click(submit_func, [prompt, token_count, temperature, top_p, presence_penalty, count_penalty], [output])
         clear.click(lambda: None, [], [output])
         data.click(lambda x: x, [data], [prompt, token_count, temperature, top_p, presence_penalty, count_penalty])
+
+
+
 
     with gr.Tab("=== English Q/A ==="):
         gr.Markdown(f"This is [RWKV-6](https://huggingface.co/BlinkDL/rwkv-6-world) state-tuned to [English Q/A](https://huggingface.co/BlinkDL/temp-latest-training-models/blob/main/{eng_name}.pth). RWKV is a 100% attention-free RNN [RWKV-LM](https://github.com/BlinkDL/RWKV-LM), and we have [300+ Github RWKV projects](https://github.com/search?o=desc&p=1&q=rwkv&s=updated&type=Repositories). Demo limited to ctxlen {ctx_limit}.")
